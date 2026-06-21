@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -47,12 +48,10 @@ fun AppContent() {
         mutableStateOf(prefs.getBoolean("gzvm_support", false))
     }
 
-    // 状态变量：root、gunyah可用性、gzvm可用性
     var rootStatus by remember { mutableStateOf("检测中...") }
     var gunyahStatus by remember { mutableStateOf("检测中...") }
     var gzvmStatus by remember { mutableStateOf("检测中...") }
 
-    // 启动时检测所有状态
     LaunchedEffect(Unit) {
         val (root, gunyah, gzvm) = checkAllStatus()
         rootStatus = root
@@ -124,47 +123,50 @@ fun AppContent() {
                 )
             }
         ) { innerPadding ->
-            when (currentScreen) {
-                "main" -> {
-                    Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-                        TextButton(
-                            onClick = { currentScreen = "add_vm" },
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(16.dp)
-                        ) {
-                            Text(
-                                text = "添加虚拟机",
-                                color = Color.Blue,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Medium
-                            )
+            // 使用 Crossfade 实现淡入淡出过渡
+            Crossfade(targetState = currentScreen) { screen ->
+                when (screen) {
+                    "main" -> {
+                        Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+                            TextButton(
+                                onClick = { currentScreen = "add_vm" },
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(16.dp)
+                            ) {
+                                Text(
+                                    text = "添加虚拟机",
+                                    color = Color.Blue,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         }
                     }
-                }
-                "settings" -> {
-                    SettingsScreen(
-                        isGunyahEnabled = isGunyahEnabled,
-                        onGunyahEnabledChange = { newValue ->
-                            if (newValue) isGzvmEnabled = false
-                            isGunyahEnabled = newValue
-                        },
-                        isGzvmEnabled = isGzvmEnabled,
-                        onGzvmEnabledChange = { newValue ->
-                            if (newValue) isGunyahEnabled = false
-                            isGzvmEnabled = newValue
-                        },
-                        rootStatus = rootStatus,
-                        gunyahStatus = gunyahStatus,
-                        gzvmStatus = gzvmStatus,
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
-                "add_vm" -> {
-                    AddVmScreen(
-                        onBackClick = { currentScreen = "main" },
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                    "settings" -> {
+                        SettingsScreen(
+                            isGunyahEnabled = isGunyahEnabled,
+                            onGunyahEnabledChange = { newValue ->
+                                if (newValue) isGzvmEnabled = false
+                                isGunyahEnabled = newValue
+                            },
+                            isGzvmEnabled = isGzvmEnabled,
+                            onGzvmEnabledChange = { newValue ->
+                                if (newValue) isGunyahEnabled = false
+                                isGzvmEnabled = newValue
+                            },
+                            rootStatus = rootStatus,
+                            gunyahStatus = gunyahStatus,
+                            gzvmStatus = gzvmStatus,
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    }
+                    "add_vm" -> {
+                        AddVmScreen(
+                            onBackClick = { currentScreen = "main" },
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    }
                 }
             }
         }
@@ -173,10 +175,9 @@ fun AppContent() {
 
 /**
  * 检测所有状态：root、gunyah设备、gzvm设备
- * 返回 Triple(root状态, gunyah状态, gzvm状态)
  */
 private suspend fun checkAllStatus(): Triple<String, String, String> = withContext(Dispatchers.IO) {
-    // 1. 检测 root
+    // 检测 root
     val root = try {
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "exit"))
         val exitCode = process.waitFor()
@@ -186,7 +187,7 @@ private suspend fun checkAllStatus(): Triple<String, String, String> = withConte
         "未获取"
     }
 
-    // 2. 检测 Gunyah 设备（仅当 root 已获取时执行）
+    // 检测 Gunyah
     val gunyah = if (root == "已获取") {
         try {
             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /dev/gunyah"))
@@ -201,7 +202,7 @@ private suspend fun checkAllStatus(): Triple<String, String, String> = withConte
         "不可使用"
     }
 
-    // 3. 检测 GZVM 设备
+    // 检测 GZVM
     val gzvm = if (root == "已获取") {
         try {
             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /dev/gzvm"))
