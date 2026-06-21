@@ -21,13 +21,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.termux.terminal.TerminalSession
+import com.qeqenn.qals.tty.*
 import com.qeqenn.qals.ui.theme.QALSTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-// ---------- 数据类 ----------
+// ---------- 数据类 VmConfig（保持不变） ----------
 data class VmConfig(
     val id: String = System.currentTimeMillis().toString(),
     val name: String = "",
@@ -40,7 +42,8 @@ data class VmConfig(
     val audio: Boolean = false,
     val bootMode: String = "UEFI",
     val kernel: String? = null,
-    val cmdline: String? = null
+    val cmdline: String? = null,
+    val displayEnabled: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -55,6 +58,7 @@ data class VmConfig(
         put("bootMode", bootMode)
         put("kernel", kernel)
         put("cmdline", cmdline)
+        put("displayEnabled", displayEnabled)
     }
 
     companion object {
@@ -70,7 +74,8 @@ data class VmConfig(
             audio = json.getBoolean("audio"),
             bootMode = json.getString("bootMode"),
             kernel = if (json.has("kernel") && !json.isNull("kernel")) json.getString("kernel") else null,
-            cmdline = if (json.has("cmdline") && !json.isNull("cmdline")) json.getString("cmdline") else null
+            cmdline = if (json.has("cmdline") && !json.isNull("cmdline")) json.getString("cmdline") else null,
+            displayEnabled = if (json.has("displayEnabled")) json.getBoolean("displayEnabled") else false
         )
     }
 }
@@ -82,11 +87,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             AppContent()
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        VmManager.stopAll()
     }
 }
 
@@ -115,6 +115,7 @@ fun AppContent() {
     var bootMode by remember { mutableStateOf("UEFI") }
     var kernelPath by remember { mutableStateOf("") }
     var kernelCmdline by remember { mutableStateOf("") }
+    var displayEnabled by remember { mutableStateOf(false) }
 
     var editingVmId by remember { mutableStateOf<String?>(null) }
 
@@ -147,14 +148,13 @@ fun AppContent() {
     // ---------- 刷新触发器 ----------
     var refreshTrigger by remember { mutableStateOf(0) }
 
-    // ---------- 终端相关 ----------
-    var terminalLines by remember { mutableStateOf<List<String>>(emptyList()) }
-    var currentRunningVm by remember { mutableStateOf<VmConfig?>(null) }
+    // ---------- TTY 相关 ----------
+    var currentTTYInstance by remember { mutableStateOf<TTYInstance?>(null) }
 
-    // ---------- 名称校验错误状态 ----------
+    // ---------- 名称校验 ----------
     var nameError by remember { mutableStateOf<String?>(null) }
 
-    // ---------- 启动加载 ----------
+    // ---------- 加载 ----------
     LaunchedEffect(Unit) {
         vmList = loadVmList(prefs)
         addLog("--- 应用启动 ---")
@@ -165,6 +165,7 @@ fun AppContent() {
         addLog("检测完成: Root=$root, Gunyah=$gunyah, GZVM=$gzvm")
     }
 
+    // ---------- 表单操作 ----------
     fun resetForm() {
         vmName = ""
         selectedOs = ""
@@ -179,6 +180,7 @@ fun AppContent() {
         bootMode = "UEFI"
         kernelPath = ""
         kernelCmdline = ""
+        displayEnabled = false
         editingVmId = null
         nameError = null
     }
@@ -197,17 +199,16 @@ fun AppContent() {
         bootMode = vm.bootMode
         kernelPath = vm.kernel ?: ""
         kernelCmdline = vm.cmdline ?: ""
+        displayEnabled = vm.displayEnabled
         editingVmId = vm.id
         nameError = null
     }
 
-    // ---------- 保存虚拟机（带名称校验） ----------
     fun saveVm(): Boolean {
         if (vmName.isBlank()) {
             nameError = "请输入虚拟机名称"
             return false
         }
-
         val isDuplicate = vmList.any {
             it.name.equals(vmName, ignoreCase = true) && it.id != editingVmId
         }
@@ -215,9 +216,7 @@ fun AppContent() {
             nameError = "虚拟机名称已存在"
             return false
         }
-
         nameError = null
-
         val config = VmConfig(
             id = editingVmId ?: System.currentTimeMillis().toString(),
             name = vmName,
@@ -230,7 +229,8 @@ fun AppContent() {
             audio = audioEnabled,
             bootMode = bootMode,
             kernel = if (bootMode == "内核") kernelPath else null,
-            cmdline = if (bootMode == "内核") kernelCmdline else null
+            cmdline = if (bootMode == "内核") kernelCmdline else null,
+            displayEnabled = displayEnabled
         )
         val newList = if (editingVmId != null) {
             vmList.map { if (it.id == editingVmId) config else it }
@@ -250,53 +250,40 @@ fun AppContent() {
         vmList = newList
     }
 
-    // ---------- 运行逻辑 ----------
-    fun startVm(vm: VmConfig) {
-        terminalLines = emptyList()
-        currentRunningVm = vm
-        currentScreen = "terminal"
-
-        terminalLines = terminalLines + ">>> 正在启动虚拟机: ${vm.name} <<<"
-
-        val success = VmManager.startVm(
+    // ---------- TTY 启动 ----------
+    fun startVmInTerminal(vm: VmConfig) {
+        addLog("准备在终端中启动虚拟机: ${vm.name}")
+        val cmd = QemuCommandBuilder.buildCommand(
             vm = vm,
             gunyahEnabled = isGunyahEnabled,
             gzvmEnabled = isGzvmEnabled,
-            onLog = ::addLog,
-            onOutput = { line ->
-                terminalLines = terminalLines + line
-            },
-            onExit = { exitCode ->
-                terminalLines = terminalLines + ""
-                terminalLines = terminalLines + ">>> 进程已退出，退出码：$exitCode <<<"
-                refreshTrigger++
-                addLog("进程退出，退出码: $exitCode")
-            }
+            onLog = ::addLog
         )
-
-        if (!success) {
-            currentScreen = "main"
-            addLog("虚拟机启动失败")
+        if (cmd == null) {
+            addLog("命令构建失败")
+            return
         }
-        refreshTrigger++
+        addLog("完整命令: $cmd")
+
+        // 创建 TTY 实例
+        val sessionClient = TTYSessionStub()
+        val viewClient = TTYViewStub()
+        val instance = createTTYInstance(context, sessionClient, viewClient)
+        currentTTYInstance = instance
+
+        // 在终端中执行命令
+        ttyIO.execute {
+            instance.session.write(("$cmd\n").toByteArray())
+        }
+
+        // 跳转到终端界面
+        currentScreen = "tty"
     }
 
-    fun stopVm(vmId: String) {
-        VmManager.stopVm(vmId)
-        if (currentScreen == "terminal") {
-            terminalLines = terminalLines + ">>> 虚拟机已手动停止 <<<"
-        }
+    // 停止虚拟机（通过终端会话发送 Ctrl+C）
+    fun stopVmInTerminal() {
+        currentTTYInstance?.session?.write("\u0003".toByteArray())        addLog("发送停止信号")
         refreshTrigger++
-    }
-
-    // 打开终端界面并显示指定虚拟机的输出
-    fun openTerminal(vm: VmConfig) {
-        currentRunningVm = vm
-        currentScreen = "terminal"
-        // 如果 terminalLines 为空，可以添加提示
-        if (terminalLines.isEmpty()) {
-            terminalLines = listOf(">>> 等待虚拟机输出... <<<")
-        }
     }
 
     // ---------- 返回键 ----------
@@ -325,7 +312,7 @@ fun AppContent() {
                                 "add_vm" -> "添加虚拟机"
                                 "edit_vm" -> "修改虚拟机"
                                 "logs" -> "日志"
-                                "terminal" -> "终端 - ${currentRunningVm?.name ?: ""}"
+                                "tty" -> "终端 - ${currentTTYInstance?.let { "QEMU" } ?: ""}"
                                 else -> "QALS"
                             },
                             fontSize = 24.sp,
@@ -358,9 +345,7 @@ fun AppContent() {
                             "add_vm", "edit_vm" -> {
                                 TextButton(
                                     onClick = {
-                                        if (saveVm()) {
-                                            // 保存成功后自动跳转，无需额外操作
-                                        }
+                                        if (saveVm()) { /* 自动跳转 */ }
                                     }
                                 ) {
                                     Text("保存", color = Color.Green, fontSize = 18.sp, fontWeight = FontWeight.Medium)
@@ -377,8 +362,15 @@ fun AppContent() {
                                     Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
-                            "terminal" -> {
-                                TextButton(onClick = { currentScreen = "main" }) {
+                            "tty" -> {
+                                // 提供停止和返回按钮
+                                TextButton(onClick = { stopVmInTerminal() }) {
+                                    Text("停止", color = Color.Red, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                }
+                                TextButton(onClick = {
+                                    currentScreen = "main"
+                                    currentTTYInstance = null
+                                }) {
                                     Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
@@ -396,7 +388,7 @@ fun AppContent() {
                                 contentPadding = PaddingValues(bottom = 60.dp)
                             ) {
                                 items(vmList) { vm ->
-                                    val isRunning = VmManager.isRunning(vm.id)
+                                    val isRunning = currentTTYInstance != null // 简化，实际可根据 session 状态
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -440,10 +432,9 @@ fun AppContent() {
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.End
                                             ) {
-                                                // ---------- 条件显示“终端”按钮 ----------
                                                 if (isRunning) {
                                                     Button(
-                                                        onClick = { openTerminal(vm) },
+                                                        onClick = { /* 暂时无操作，或打开终端 */ },
                                                         colors = ButtonDefaults.buttonColors(
                                                             containerColor = Color(0xFF4CAF50)
                                                         ),
@@ -452,13 +443,13 @@ fun AppContent() {
                                                         Text("终端")
                                                     }
                                                 }
-                                                // ---------- “运行”/“结束”按钮 ----------
                                                 Button(
                                                     onClick = {
                                                         if (isRunning) {
-                                                            stopVm(vm.id)
+                                                            // 停止
+                                                            stopVmInTerminal()
                                                         } else {
-                                                            startVm(vm)
+                                                            startVmInTerminal(vm)
                                                         }
                                                     },
                                                     colors = ButtonDefaults.buttonColors(
@@ -565,6 +556,8 @@ fun AppContent() {
                             onKernelPathChange = { kernelPath = it },
                             kernelCmdline = kernelCmdline,
                             onKernelCmdlineChange = { kernelCmdline = it },
+                            displayEnabled = displayEnabled,
+                            onDisplayEnabledChange = { displayEnabled = it },
                             nameError = nameError,
                             modifier = Modifier.padding(innerPadding)
                         )
@@ -577,11 +570,19 @@ fun AppContent() {
                             }
                         )
                     }
-                    "terminal" -> {
-                        TerminalScreen(
-                            lines = terminalLines,
-                            modifier = Modifier.padding(innerPadding)
-                        )
+                    "tty" -> {
+                        currentTTYInstance?.let { instance ->
+                            // 使用 TTYScreen 显示终端，键盘作为 content
+                            TTYScreen(
+                                instance = instance,
+                                content = { TTYIME() }
+                            )
+                        } ?: run {
+                            // 如果实例为空，显示提示并返回
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("终端已关闭", color = Color.White)
+                            }
+                        }
                     }
                 }
             }

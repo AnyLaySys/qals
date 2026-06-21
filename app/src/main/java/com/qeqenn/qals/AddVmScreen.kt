@@ -20,47 +20,38 @@ import androidx.compose.ui.unit.sp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddVmScreen(
-    // ---------- 新增：名称错误信息 ----------
     nameError: String? = null,
-    // 名称
     vmName: String,
     onVmNameChange: (String) -> Unit,
-    // 操作系统
     osExpanded: Boolean,
     onOsExpandedChange: (Boolean) -> Unit,
     selectedOs: String,
     onSelectedOsChange: (String) -> Unit,
     osOptions: List<String>,
-    // CPU
     cpuCores: Float,
     onCpuCoresChange: (Float) -> Unit,
-    // 内存
     memorySize: Float,
     onMemorySizeChange: (Float) -> Unit,
-    // 光盘
     cdromEnabled: Boolean,
     onCdromEnabledChange: (Boolean) -> Unit,
     cdromPath: String,
     onCdromPathChange: (String) -> Unit,
-    // 硬盘
     diskEnabled: Boolean,
     onDiskEnabledChange: (Boolean) -> Unit,
     diskPath: String,
     onDiskPathChange: (String) -> Unit,
-    // 网络
     networkEnabled: Boolean,
     onNetworkEnabledChange: (Boolean) -> Unit,
-    // 音频
     audioEnabled: Boolean,
     onAudioEnabledChange: (Boolean) -> Unit,
-    // 启动方式
     bootMode: String,
     onBootModeChange: (String) -> Unit,
-    // 内核
     kernelPath: String,
     onKernelPathChange: (String) -> Unit,
     kernelCmdline: String,
     onKernelCmdlineChange: (String) -> Unit,
+    displayEnabled: Boolean,
+    onDisplayEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -106,7 +97,7 @@ fun AddVmScreen(
             .imePadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // ---------- 名称输入框 ----------
+        // 名称
         Column(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -120,7 +111,6 @@ fun AddVmScreen(
                     .fillMaxWidth()
                     .padding(top = 16.dp)
             )
-            // ---------- 显示错误信息 ----------
             if (nameError != null) {
                 Text(
                     text = nameError,
@@ -131,7 +121,7 @@ fun AddVmScreen(
             }
         }
 
-        // ---------- 操作系统 ----------
+        // 操作系统
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -174,7 +164,7 @@ fun AddVmScreen(
             }
         }
 
-        // ---------- CPU ----------
+        // CPU
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -204,7 +194,7 @@ fun AddVmScreen(
             )
         }
 
-        // ---------- 内存 ----------
+        // 内存
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -234,7 +224,7 @@ fun AddVmScreen(
             )
         }
 
-        // ---------- 光盘 ----------
+        // 光盘
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -279,7 +269,7 @@ fun AddVmScreen(
             }
         }
 
-        // ---------- 硬盘 ----------
+        // 硬盘
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -324,7 +314,7 @@ fun AddVmScreen(
             }
         }
 
-        // ---------- 网络 ----------
+        // 网络
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -342,7 +332,7 @@ fun AddVmScreen(
             )
         }
 
-        // ---------- 音频 ----------
+        // 音频（保留开关但实际已禁用，但仍存储到配置，以备后续使用）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -360,7 +350,7 @@ fun AddVmScreen(
             )
         }
 
-        // ---------- 启动方式 ----------
+        // 启动方式
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -397,7 +387,7 @@ fun AddVmScreen(
             }
         }
 
-        // ---------- 内核（条件显示） ----------
+        // 内核
         if (bootMode == "内核") {
             Column(
                 modifier = Modifier
@@ -455,6 +445,24 @@ fun AddVmScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+        }
+
+        // ---------- 新增：启用显示 ----------
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "启用显示",
+                fontSize = 18.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = displayEnabled,
+                onCheckedChange = onDisplayEnabledChange
+            )
         }
 
         Spacer(modifier = Modifier.height(100.dp))
