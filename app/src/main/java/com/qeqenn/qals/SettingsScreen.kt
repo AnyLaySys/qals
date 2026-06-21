@@ -63,7 +63,7 @@ fun SettingsScreen(
             )
         }
 
-        // Root 状态（显示用，不可交互）
+        // Root 状态
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -74,7 +74,7 @@ fun SettingsScreen(
                 text = "Root状态：",
                 fontSize = 18.sp,
                 color = Color.Gray,
-                modifier = Modifier.weight(0.4f)  // 与下面对齐
+                modifier = Modifier.weight(0.4f)
             )
             Text(
                 text = rootStatus,
@@ -88,7 +88,7 @@ fun SettingsScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp), // 间距减小
+                .padding(top = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
