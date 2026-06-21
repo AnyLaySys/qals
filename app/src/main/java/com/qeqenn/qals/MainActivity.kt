@@ -4,10 +4,10 @@ import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -83,12 +83,18 @@ class MainActivity : ComponentActivity() {
             AppContent()
         }
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        VmManager.stopAll()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppContent() {
     val context = LocalContext.current
+    val activity = context as? ComponentActivity
     val prefs = context.getSharedPreferences("qals_prefs", Context.MODE_PRIVATE)
 
     var currentScreen by remember { mutableStateOf("main") }
@@ -123,12 +129,40 @@ fun AppContent() {
     // ---------- 虚拟机列表 ----------
     var vmList by remember { mutableStateOf<List<VmConfig>>(emptyList()) }
 
-    // ---------- 删除确认对话框状态 ----------
+    // ---------- 删除对话框 ----------
     var showDeleteDialog by remember { mutableStateOf(false) }
     var deleteTargetId by remember { mutableStateOf<String?>(null) }
 
+    // ---------- 日志 ----------
+    var logMessages by remember { mutableStateOf<List<String>>(emptyList()) }
+    fun addLog(msg: String) {
+        logMessages = logMessages + msg
+    }
+
+    // ---------- 状态变量 ----------
+    var rootStatus by remember { mutableStateOf("检测中...") }
+    var gunyahStatus by remember { mutableStateOf("检测中...") }
+    var gzvmStatus by remember { mutableStateOf("检测中...") }
+
+    // ---------- 刷新触发器 ----------
+    var refreshTrigger by remember { mutableStateOf(0) }
+
+    // ---------- 终端相关 ----------
+    var terminalLines by remember { mutableStateOf<List<String>>(emptyList()) }
+    var currentRunningVm by remember { mutableStateOf<VmConfig?>(null) }
+
+    // ---------- 名称校验错误状态 ----------
+    var nameError by remember { mutableStateOf<String?>(null) }
+
+    // ---------- 启动加载 ----------
     LaunchedEffect(Unit) {
         vmList = loadVmList(prefs)
+        addLog("--- 应用启动 ---")
+        val (root, gunyah, gzvm) = checkAllStatus(onLog = ::addLog)
+        rootStatus = root
+        gunyahStatus = gunyah
+        gzvmStatus = gzvm
+        addLog("检测完成: Root=$root, Gunyah=$gunyah, GZVM=$gzvm")
     }
 
     fun resetForm() {
@@ -146,6 +180,7 @@ fun AppContent() {
         kernelPath = ""
         kernelCmdline = ""
         editingVmId = null
+        nameError = null
     }
 
     fun loadVmForEdit(vm: VmConfig) {
@@ -163,9 +198,26 @@ fun AppContent() {
         kernelPath = vm.kernel ?: ""
         kernelCmdline = vm.cmdline ?: ""
         editingVmId = vm.id
+        nameError = null
     }
 
-    fun saveVm() {
+    // ---------- 保存虚拟机（带名称校验） ----------
+    fun saveVm(): Boolean {
+        if (vmName.isBlank()) {
+            nameError = "请输入虚拟机名称"
+            return false
+        }
+
+        val isDuplicate = vmList.any {
+            it.name.equals(vmName, ignoreCase = true) && it.id != editingVmId
+        }
+        if (isDuplicate) {
+            nameError = "虚拟机名称已存在"
+            return false
+        }
+
+        nameError = null
+
         val config = VmConfig(
             id = editingVmId ?: System.currentTimeMillis().toString(),
             name = vmName,
@@ -189,6 +241,7 @@ fun AppContent() {
         vmList = newList
         currentScreen = "main"
         resetForm()
+        return true
     }
 
     fun deleteVm(vmId: String) {
@@ -197,16 +250,65 @@ fun AppContent() {
         vmList = newList
     }
 
-    // ---------- 状态检测 ----------
-    var rootStatus by remember { mutableStateOf("检测中...") }
-    var gunyahStatus by remember { mutableStateOf("检测中...") }
-    var gzvmStatus by remember { mutableStateOf("检测中...") }
+    // ---------- 运行逻辑 ----------
+    fun startVm(vm: VmConfig) {
+        terminalLines = emptyList()
+        currentRunningVm = vm
+        currentScreen = "terminal"
 
-    LaunchedEffect(Unit) {
-        val (root, gunyah, gzvm) = checkAllStatus()
-        rootStatus = root
-        gunyahStatus = gunyah
-        gzvmStatus = gzvm
+        terminalLines = terminalLines + ">>> 正在启动虚拟机: ${vm.name} <<<"
+
+        val success = VmManager.startVm(
+            vm = vm,
+            gunyahEnabled = isGunyahEnabled,
+            gzvmEnabled = isGzvmEnabled,
+            onLog = ::addLog,
+            onOutput = { line ->
+                terminalLines = terminalLines + line
+            },
+            onExit = { exitCode ->
+                terminalLines = terminalLines + ""
+                terminalLines = terminalLines + ">>> 进程已退出，退出码：$exitCode <<<"
+                refreshTrigger++
+                addLog("进程退出，退出码: $exitCode")
+            }
+        )
+
+        if (!success) {
+            currentScreen = "main"
+            addLog("虚拟机启动失败")
+        }
+        refreshTrigger++
+    }
+
+    fun stopVm(vmId: String) {
+        VmManager.stopVm(vmId)
+        if (currentScreen == "terminal") {
+            terminalLines = terminalLines + ">>> 虚拟机已手动停止 <<<"
+        }
+        refreshTrigger++
+    }
+
+    // 打开终端界面并显示指定虚拟机的输出
+    fun openTerminal(vm: VmConfig) {
+        currentRunningVm = vm
+        currentScreen = "terminal"
+        // 如果 terminalLines 为空，可以添加提示
+        if (terminalLines.isEmpty()) {
+            terminalLines = listOf(">>> 等待虚拟机输出... <<<")
+        }
+    }
+
+    // ---------- 返回键 ----------
+    BackHandler {
+        if (currentScreen != "main") {
+            if (currentScreen == "add_vm" || currentScreen == "edit_vm") {
+                resetForm()
+            }
+            currentScreen = "main"
+        } else {
+            activity?.finish()
+        }
     }
 
     // ---------- UI ----------
@@ -222,6 +324,8 @@ fun AppContent() {
                                 "settings" -> "设置"
                                 "add_vm" -> "添加虚拟机"
                                 "edit_vm" -> "修改虚拟机"
+                                "logs" -> "日志"
+                                "terminal" -> "终端 - ${currentRunningVm?.name ?: ""}"
                                 else -> "QALS"
                             },
                             fontSize = 24.sp,
@@ -231,6 +335,9 @@ fun AppContent() {
                     actions = {
                         when (currentScreen) {
                             "main" -> {
+                                TextButton(onClick = { currentScreen = "logs" }) {
+                                    Text("日志", color = Color(0xFF2196F3), fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                }
                                 TextButton(onClick = { currentScreen = "settings" }) {
                                     Text("设置", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                 }
@@ -249,13 +356,29 @@ fun AppContent() {
                                 }
                             }
                             "add_vm", "edit_vm" -> {
-                                TextButton(onClick = { saveVm() }) {
+                                TextButton(
+                                    onClick = {
+                                        if (saveVm()) {
+                                            // 保存成功后自动跳转，无需额外操作
+                                        }
+                                    }
+                                ) {
                                     Text("保存", color = Color.Green, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                 }
                                 TextButton(onClick = {
                                     resetForm()
                                     currentScreen = "main"
                                 }) {
+                                    Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            "logs" -> {
+                                TextButton(onClick = { currentScreen = "main" }) {
+                                    Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            "terminal" -> {
+                                TextButton(onClick = { currentScreen = "main" }) {
                                     Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
@@ -273,6 +396,7 @@ fun AppContent() {
                                 contentPadding = PaddingValues(bottom = 60.dp)
                             ) {
                                 items(vmList) { vm ->
+                                    val isRunning = VmManager.isRunning(vm.id)
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -312,20 +436,43 @@ fun AppContent() {
                                                     color = Color.Gray
                                                 )
                                             }
-                                            Button(
-                                                onClick = {
-                                                    // TODO: 运行虚拟机逻辑（后续实现）
-                                                },
-                                                modifier = Modifier.padding(start = 8.dp)
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.End
                                             ) {
-                                                Text("运行")
+                                                // ---------- 条件显示“终端”按钮 ----------
+                                                if (isRunning) {
+                                                    Button(
+                                                        onClick = { openTerminal(vm) },
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color(0xFF4CAF50)
+                                                        ),
+                                                        modifier = Modifier.padding(end = 8.dp)
+                                                    ) {
+                                                        Text("终端")
+                                                    }
+                                                }
+                                                // ---------- “运行”/“结束”按钮 ----------
+                                                Button(
+                                                    onClick = {
+                                                        if (isRunning) {
+                                                            stopVm(vm.id)
+                                                        } else {
+                                                            startVm(vm)
+                                                        }
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (isRunning) Color.Red else Color(0xFF1976D2)
+                                                    )
+                                                ) {
+                                                    Text(if (isRunning) "结束" else "运行")
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
 
-                            // 添加虚拟机按钮
                             TextButton(
                                 onClick = {
                                     resetForm()
@@ -338,7 +485,6 @@ fun AppContent() {
                                 Text("添加虚拟机", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                             }
 
-                            // ---------- 删除确认对话框 ----------
                             if (showDeleteDialog) {
                                 AlertDialog(
                                     onDismissRequest = { showDeleteDialog = false },
@@ -388,7 +534,10 @@ fun AppContent() {
                     "add_vm", "edit_vm" -> {
                         AddVmScreen(
                             vmName = vmName,
-                            onVmNameChange = { vmName = it },
+                            onVmNameChange = {
+                                vmName = it
+                                nameError = null
+                            },
                             osExpanded = osExpanded,
                             onOsExpandedChange = { osExpanded = it },
                             selectedOs = selectedOs,
@@ -416,6 +565,21 @@ fun AppContent() {
                             onKernelPathChange = { kernelPath = it },
                             kernelCmdline = kernelCmdline,
                             onKernelCmdlineChange = { kernelCmdline = it },
+                            nameError = nameError,
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    }
+                    "logs" -> {
+                        LogsScreen(
+                            logMessages = logMessages,
+                            onClear = {
+                                logMessages = emptyList()
+                            }
+                        )
+                    }
+                    "terminal" -> {
+                        TerminalScreen(
+                            lines = terminalLines,
                             modifier = Modifier.padding(innerPadding)
                         )
                     }
@@ -445,39 +609,56 @@ fun saveVmList(prefs: android.content.SharedPreferences, list: List<VmConfig>) {
 }
 
 // ---------- 状态检测 ----------
-suspend fun checkAllStatus(): Triple<String, String, String> = withContext(Dispatchers.IO) {
-    val root = try {
-        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "exit"))
-        val exitCode = process.waitFor()
-        if (exitCode == 0) "已获取" else "未获取"
-    } catch (e: Exception) {
-        Log.e("StatusCheck", "检测 root 失败: ${e.message}")
-        "未获取"
+suspend fun checkAllStatus(onLog: (String) -> Unit): Triple<String, String, String> =
+    withContext(Dispatchers.IO) {
+        onLog("执行命令: su -c exit")
+        val root = try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "exit"))
+            val exitCode = process.waitFor()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            val error = process.errorStream.bufferedReader().readText().trim()
+            onLog("退出码: $exitCode, 输出: $output, 错误: $error")
+            if (exitCode == 0) "已获取" else "未获取"
+        } catch (e: Exception) {
+            onLog("异常: ${e.message}")
+            "未获取"
+        }
+
+        onLog("执行命令: su -c ls /dev/gunyah")
+        val gunyah = if (root == "已获取") {
+            try {
+                val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /dev/gunyah"))
+                val exitCode = process.waitFor()
+                val output = process.inputStream.bufferedReader().readText().trim()
+                val error = process.errorStream.bufferedReader().readText().trim()
+                onLog("退出码: $exitCode, 输出: $output, 错误: $error")
+                if (exitCode == 0 && output == "/dev/gunyah") "可以使用" else "不可使用"
+            } catch (e: Exception) {
+                onLog("异常: ${e.message}")
+                "不可使用"
+            }
+        } else {
+            onLog("跳过（无root）")
+            "不可使用"
+        }
+
+        onLog("执行命令: su -c ls /dev/gzvm")
+        val gzvm = if (root == "已获取") {
+            try {
+                val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /dev/gzvm"))
+                val exitCode = process.waitFor()
+                val output = process.inputStream.bufferedReader().readText().trim()
+                val error = process.errorStream.bufferedReader().readText().trim()
+                onLog("退出码: $exitCode, 输出: $output, 错误: $error")
+                if (exitCode == 0 && output == "/dev/gzvm") "可以使用" else "不可使用"
+            } catch (e: Exception) {
+                onLog("异常: ${e.message}")
+                "不可使用"
+            }
+        } else {
+            onLog("跳过（无root）")
+            "不可使用"
+        }
+
+        Triple(root, gunyah, gzvm)
     }
-
-    val gunyah = if (root == "已获取") {
-        try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /dev/gunyah"))
-            val exitCode = process.waitFor()
-            val output = process.inputStream.bufferedReader().readText().trim()
-            if (exitCode == 0 && output == "/dev/gunyah") "可以使用" else "不可使用"
-        } catch (e: Exception) {
-            Log.e("StatusCheck", "检测 Gunyah 失败: ${e.message}")
-            "不可使用"
-        }
-    } else "不可使用"
-
-    val gzvm = if (root == "已获取") {
-        try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /dev/gzvm"))
-            val exitCode = process.waitFor()
-            val output = process.inputStream.bufferedReader().readText().trim()
-            if (exitCode == 0 && output == "/dev/gzvm") "可以使用" else "不可使用"
-        } catch (e: Exception) {
-            Log.e("StatusCheck", "检测 GZVM 失败: ${e.message}")
-            "不可使用"
-        }
-    } else "不可使用"
-
-    Triple(root, gunyah, gzvm)
-}

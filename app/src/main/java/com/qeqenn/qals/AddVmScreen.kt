@@ -20,7 +20,9 @@ import androidx.compose.ui.unit.sp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddVmScreen(
-    // 新增名称
+    // ---------- 新增：名称错误信息 ----------
+    nameError: String? = null,
+    // 名称
     vmName: String,
     onVmNameChange: (String) -> Unit,
     // 操作系统
@@ -104,16 +106,30 @@ fun AddVmScreen(
             .imePadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // ========== 名称输入框（新增） ==========
-        TextField(
-            value = vmName,
-            onValueChange = onVmNameChange,
-            label = { Text("名称") },
-            placeholder = { Text("输入虚拟机名称") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 16.dp)
-        )
+        // ---------- 名称输入框 ----------
+        Column(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            TextField(
+                value = vmName,
+                onValueChange = onVmNameChange,
+                label = { Text("名称") },
+                placeholder = { Text("输入虚拟机名称") },
+                isError = nameError != null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp)
+            )
+            // ---------- 显示错误信息 ----------
+            if (nameError != null) {
+                Text(
+                    text = nameError,
+                    color = Color.Red,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                )
+            }
+        }
 
         // ---------- 操作系统 ----------
         Row(
