@@ -120,15 +120,23 @@ object VmManager {
             else -> "/data/local/tmp/qemu-gunyah"
         }
 
-        val libs = base      // LD_LIBRARY_PATH 直接指向 base
-        val bios = "$base/QEMU_EFI.fd"
+        // 确定 lib 路径
+        val libs = if (gunyahEnabled && !gzvmEnabled) {
+            "$base/lib"
+        } else {
+            base
+        }
+
+        val bios = "$base/edk2-aarch64-gunyah.fd"
 
         val cpuCount = vm.cpu
         val memSize = vm.memory.toInt()
 
         val cmd = mutableListOf<String>()
-        // 新增 DISPLAY 环境变量
         cmd.add("DISPLAY=:1")
+        cmd.add("SDL_AUDIODRIVER=aaudio")
+        cmd.add("LANG=C")
+        cmd.add("LC_ALL=C")
         cmd.add("LD_LIBRARY_PATH=$libs")
         cmd.add("nice")
         cmd.add("-n")
@@ -138,7 +146,7 @@ object VmManager {
         cmd.add(mask)
         cmd.add("$base/qemu-system-aarch64")
         cmd.add("-L")
-        cmd.add("$base/pc-bios")
+        cmd.add("$base/fw")
 
         // 确定加速器
         val accel = when {
@@ -153,7 +161,7 @@ object VmManager {
 
         // ---------- 根据加速器选择不同参数 ----------
         if (accel == "gzvm") {
-            // ---------- GZVM 专用参数（依据成功命令） ----------
+            // ---------- GZVM 专用参数 ----------
             cmd.add("-M")
             cmd.add("virt,gic-version=3")
 
@@ -168,7 +176,6 @@ object VmManager {
             cmd.add("-m")
             cmd.add("${memSize}G")
 
-            // 内核或 bios
             if (vm.bootMode == "内核") {
                 if (vm.kernel.isNullOrEmpty()) {
                     onLog("内核文件未选择")
@@ -185,7 +192,6 @@ object VmManager {
                 cmd.add(bios)
             }
 
-            // 硬盘（使用 ioeventfd=off 模式）
             if (vm.disk != null) {
                 cmd.add("-drive")
                 cmd.add("if=none,file=${vm.disk},format=raw,id=hd")
@@ -193,7 +199,6 @@ object VmManager {
                 cmd.add("virtio-blk-pci,drive=hd,ioeventfd=off")
             }
 
-            // 光盘（如果配置了）
             if (vm.cdrom != null) {
                 cmd.add("-drive")
                 cmd.add("if=none,file=${vm.cdrom},format=raw,id=cd")
@@ -201,7 +206,6 @@ object VmManager {
                 cmd.add("virtio-blk-pci,drive=cd")
             }
 
-            // 网络
             if (vm.network) {
                 cmd.add("-netdev")
                 cmd.add("user,id=usernet,hostfwd=tcp::2222-:22")
@@ -209,10 +213,7 @@ object VmManager {
                 cmd.add("virtio-net-pci,netdev=usernet")
             }
 
-            // GZVM 使用 -nographic
             cmd.add("-nographic")
-
-            // 注意：不添加音频、显卡、USB 等
 
         } else {
             // ---------- Gunyah 或 TCG 的通用参数 ----------
@@ -257,11 +258,9 @@ object VmManager {
                 cmd.add(bios)
             }
 
-            // iothread
             cmd.add("-object")
             cmd.add("iothread,id=io0")
 
-            // 光盘
             if (vm.cdrom != null) {
                 cmd.add("-drive")
                 cmd.add("file=${vm.cdrom},if=none,id=dr1,format=raw,aio=threads,media=cdrom")
@@ -269,7 +268,6 @@ object VmManager {
                 cmd.add("virtio-blk-pci,drive=dr1,bootindex=1")
             }
 
-            // 硬盘
             if (vm.disk != null) {
                 cmd.add("-drive")
                 cmd.add("file=${vm.disk},if=none,id=dr0,cache=unsafe,aio=threads,discard=unmap")
@@ -277,7 +275,6 @@ object VmManager {
                 cmd.add("virtio-blk-pci,drive=dr0,num-queues=$cpuCount,iothread=io0,disable-legacy=on,disable-modern=off,bootindex=2")
             }
 
-            // 网络
             if (vm.network) {
                 cmd.add("-netdev")
                 cmd.add("user,id=usernet,hostfwd=tcp::2222-:22")
@@ -285,25 +282,26 @@ object VmManager {
                 cmd.add("virtio-net-pci,netdev=usernet")
             }
 
-            // 图形设备
+            // 图形设备（所有非GZVM都添加）
             cmd.add("-device")
             cmd.add("virtio-gpu-pci,xres=2376,yres=1080")
-            cmd.add("-display")
-            cmd.add("sdl")
 
-            // 键盘鼠标
+            // 仅当加速器为 gunyah 时才添加 -display sdl
+            if (accel == "gunyah" || (gunyahEnabled && !gzvmEnabled)) {
+                cmd.add("-display")
+                cmd.add("sdl")
+            }
+
             cmd.add("-device")
             cmd.add("virtio-tablet-pci")
             cmd.add("-device")
             cmd.add("virtio-keyboard-pci")
 
-            // 音频
             cmd.add("-audiodev")
             cmd.add("aaudio,id=aa")
             cmd.add("-device")
             cmd.add("virtio-snd-pci,audiodev=aa")
 
-            // 串口
             cmd.add("-serial")
             cmd.add("mon:stdio")
         }
