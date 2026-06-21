@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,20 +25,23 @@ fun TerminalScreen(lines: List<String>, modifier: Modifier = Modifier) {
         }
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .padding(8.dp),
-        state = listState
-    ) {
-        items(lines) { line ->
-            Text(
-                text = line,
-                color = Color(0xFF00FF00), // 绿色终端风格
-                fontSize = 14.sp,
-                modifier = Modifier.fillMaxWidth()
-            )
+    // 使用 SelectionContainer 启用文本选择
+    SelectionContainer {
+        LazyColumn(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .padding(8.dp),
+            state = listState
+        ) {
+            items(lines) { line ->
+                Text(
+                    text = line,
+                    color = Color(0xFF00FF00), // 绿色终端风格
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }

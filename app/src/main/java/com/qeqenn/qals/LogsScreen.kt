@@ -3,6 +3,7 @@ package com.qeqenn.qals
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,19 +32,23 @@ fun LogsScreen(logMessages: List<String>, onClear: () -> Unit) {
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            items(logMessages) { log ->
-                Text(
-                    text = log,
-                    fontSize = 12.sp,
-                    color = Color.DarkGray,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                )
+
+        // 使用 SelectionContainer 启用文本选择
+        SelectionContainer {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(logMessages) { log ->
+                    Text(
+                        text = log,
+                        fontSize = 12.sp,
+                        color = Color.DarkGray,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
     }

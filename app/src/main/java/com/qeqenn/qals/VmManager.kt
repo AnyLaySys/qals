@@ -9,10 +9,6 @@ object VmManager {
 
     fun isRunning(vmId: String): Boolean = runningProcesses.containsKey(vmId)
 
-    /**
-     * 启动虚拟机
-     * @param onExit 进程退出回调，参数为退出码
-     */
     fun startVm(
         vm: VmConfig,
         gunyahEnabled: Boolean,
@@ -116,18 +112,23 @@ object VmManager {
         gzvmEnabled: Boolean,
         onLog: (String) -> Unit
     ): Array<String>? {
-        // 根据加速器选择基础路径
+        // 确定基础路径
         val base = when {
+            // TCG 加速：使用 gzvm 的二进制
+            !gunyahEnabled && !gzvmEnabled -> "/data/local/tmp/qemu-gzvm"
             gzvmEnabled -> "/data/local/tmp/qemu-gzvm"
-            else -> "/data/local/tmp/qemu-gunyah"  // 默认 gunyah 或 tcg
+            else -> "/data/local/tmp/qemu-gunyah"
         }
-        val libs = "$base/libs"
+
+        val libs = base      // LD_LIBRARY_PATH 直接指向 base
         val bios = "$base/QEMU_EFI.fd"
 
         val cpuCount = vm.cpu
         val memSize = vm.memory.toInt()
 
         val cmd = mutableListOf<String>()
+        // 新增 DISPLAY 环境变量
+        cmd.add("DISPLAY=:1")
         cmd.add("LD_LIBRARY_PATH=$libs")
         cmd.add("nice")
         cmd.add("-n")
@@ -138,9 +139,8 @@ object VmManager {
         cmd.add("$base/qemu-system-aarch64")
         cmd.add("-L")
         cmd.add("$base/pc-bios")
-        cmd.add("-M")
-        cmd.add("virt,confidential-guest-support=prot0")
 
+        // 确定加速器
         val accel = when {
             gunyahEnabled && gzvmEnabled -> {
                 onLog("警告：同时启用 Gunyah 和 GZVM，使用 Gunyah")
@@ -150,74 +150,163 @@ object VmManager {
             gzvmEnabled -> "gzvm"
             else -> "tcg,thread=multi"
         }
-        cmd.add("--accel")
-        cmd.add(accel)
 
-        if (accel == "tcg,thread=multi" || accel == "tcg") {
-            cmd.add("-cpu")
-            cmd.add("cortex-a76")
-        } else {
+        // ---------- 根据加速器选择不同参数 ----------
+        if (accel == "gzvm") {
+            // ---------- GZVM 专用参数（依据成功命令） ----------
+            cmd.add("-M")
+            cmd.add("virt,gic-version=3")
+
             cmd.add("-cpu")
             cmd.add("host")
-        }
 
-        cmd.add("-smp")
-        cmd.add("$cpuCount,sockets=1,cores=$cpuCount,threads=1")
-        cmd.add("-m")
-        cmd.add("${memSize}G")
-        cmd.add("-object")
-        cmd.add("arm-confidential-guest,id=prot0,swiotlb-size=64M")
+            cmd.add("-accel")
+            cmd.add("gzvm")
 
-        if (vm.bootMode == "内核") {
-            if (vm.kernel.isNullOrEmpty()) {
-                onLog("内核文件未选择")
-                return null
+            cmd.add("-smp")
+            cmd.add("$cpuCount,sockets=1,cores=$cpuCount,threads=1")
+            cmd.add("-m")
+            cmd.add("${memSize}G")
+
+            // 内核或 bios
+            if (vm.bootMode == "内核") {
+                if (vm.kernel.isNullOrEmpty()) {
+                    onLog("内核文件未选择")
+                    return null
+                }
+                cmd.add("-kernel")
+                cmd.add(vm.kernel)
+                if (!vm.cmdline.isNullOrEmpty()) {
+                    cmd.add("-append")
+                    cmd.add(vm.cmdline)
+                }
+            } else {
+                cmd.add("-bios")
+                cmd.add(bios)
             }
-            cmd.add("-kernel")
-            cmd.add(vm.kernel)
-            if (!vm.cmdline.isNullOrEmpty()) {
-                cmd.add("-append")
-                cmd.add(vm.cmdline)
+
+            // 硬盘（使用 ioeventfd=off 模式）
+            if (vm.disk != null) {
+                cmd.add("-drive")
+                cmd.add("if=none,file=${vm.disk},format=raw,id=hd")
+                cmd.add("-device")
+                cmd.add("virtio-blk-pci,drive=hd,ioeventfd=off")
             }
+
+            // 光盘（如果配置了）
+            if (vm.cdrom != null) {
+                cmd.add("-drive")
+                cmd.add("if=none,file=${vm.cdrom},format=raw,id=cd")
+                cmd.add("-device")
+                cmd.add("virtio-blk-pci,drive=cd")
+            }
+
+            // 网络
+            if (vm.network) {
+                cmd.add("-netdev")
+                cmd.add("user,id=usernet,hostfwd=tcp::2222-:22")
+                cmd.add("-device")
+                cmd.add("virtio-net-pci,netdev=usernet")
+            }
+
+            // GZVM 使用 -nographic
+            cmd.add("-nographic")
+
+            // 注意：不添加音频、显卡、USB 等
+
         } else {
-            cmd.add("-bios")
-            cmd.add(bios)
-        }
+            // ---------- Gunyah 或 TCG 的通用参数 ----------
+            cmd.add("-M")
+            cmd.add("virt,confidential-guest-support=prot0")
 
-        cmd.add("-object")
-        cmd.add("iothread,id=io0")
+            cmd.add("--accel")
+            cmd.add(accel)
 
-        if (vm.cdrom != null) {
-            cmd.add("-drive")
-            cmd.add("file=${vm.cdrom},if=none,id=dr1,format=raw,aio=threads,media=cdrom")
+            if (accel == "tcg,thread=multi" || accel == "tcg") {
+                cmd.add("-cpu")
+                cmd.add("cortex-a76")
+            } else {
+                cmd.add("-cpu")
+                cmd.add("host")
+            }
+
+            cmd.add("-smp")
+            cmd.add("$cpuCount,sockets=1,cores=$cpuCount,threads=1")
+            cmd.add("-m")
+            cmd.add("${memSize}G")
+
+            // Gunyah 需要机密对象
+            if (accel == "gunyah" || (gunyahEnabled && !gzvmEnabled)) {
+                cmd.add("-object")
+                cmd.add("arm-confidential-guest,id=prot0,swiotlb-size=64M")
+            }
+
+            if (vm.bootMode == "内核") {
+                if (vm.kernel.isNullOrEmpty()) {
+                    onLog("内核文件未选择")
+                    return null
+                }
+                cmd.add("-kernel")
+                cmd.add(vm.kernel)
+                if (!vm.cmdline.isNullOrEmpty()) {
+                    cmd.add("-append")
+                    cmd.add(vm.cmdline)
+                }
+            } else {
+                cmd.add("-bios")
+                cmd.add(bios)
+            }
+
+            // iothread
+            cmd.add("-object")
+            cmd.add("iothread,id=io0")
+
+            // 光盘
+            if (vm.cdrom != null) {
+                cmd.add("-drive")
+                cmd.add("file=${vm.cdrom},if=none,id=dr1,format=raw,aio=threads,media=cdrom")
+                cmd.add("-device")
+                cmd.add("virtio-blk-pci,drive=dr1,bootindex=1")
+            }
+
+            // 硬盘
+            if (vm.disk != null) {
+                cmd.add("-drive")
+                cmd.add("file=${vm.disk},if=none,id=dr0,cache=unsafe,aio=threads,discard=unmap")
+                cmd.add("-device")
+                cmd.add("virtio-blk-pci,drive=dr0,num-queues=$cpuCount,iothread=io0,disable-legacy=on,disable-modern=off,bootindex=2")
+            }
+
+            // 网络
+            if (vm.network) {
+                cmd.add("-netdev")
+                cmd.add("user,id=usernet,hostfwd=tcp::2222-:22")
+                cmd.add("-device")
+                cmd.add("virtio-net-pci,netdev=usernet")
+            }
+
+            // 图形设备
             cmd.add("-device")
-            cmd.add("virtio-blk-pci,drive=dr1,bootindex=1")
-        }
+            cmd.add("virtio-gpu-pci,xres=2376,yres=1080")
+            cmd.add("-display")
+            cmd.add("sdl")
 
-        if (vm.disk != null) {
-            cmd.add("-drive")
-            cmd.add("file=${vm.disk},if=none,id=dr0,cache=unsafe,aio=threads,discard=unmap")
+            // 键盘鼠标
             cmd.add("-device")
-            cmd.add("virtio-blk-pci,drive=dr0,num-queues=$cpuCount,iothread=io0,disable-legacy=on,disable-modern=off,bootindex=2")
-        }
-
-        if (vm.network) {
-            cmd.add("-netdev")
-            cmd.add("user,id=net0,hostfwd=tcp::2222-:22")
+            cmd.add("virtio-tablet-pci")
             cmd.add("-device")
-            cmd.add("virtio-net-pci,netdev=net0,disable-legacy=on,disable-modern=off")
+            cmd.add("virtio-keyboard-pci")
+
+            // 音频
+            cmd.add("-audiodev")
+            cmd.add("aaudio,id=aa")
+            cmd.add("-device")
+            cmd.add("virtio-snd-pci,audiodev=aa")
+
+            // 串口
+            cmd.add("-serial")
+            cmd.add("mon:stdio")
         }
-
-        cmd.add("-device")
-        cmd.add("virtio-gpu-pci,disable-legacy=on,disable-modern=off")
-        cmd.add("-device")
-        cmd.add("qemu-xhci,id=usb-bus,p2=15,p3=15")
-        cmd.add("-device")
-        cmd.add("usb-tablet,bus=usb-bus.0")
-        cmd.add("-device")
-        cmd.add("usb-kbd,bus=usb-bus.0")
-
-        // -serial stdio 已省略，但 QEMU 默认输出到 stdout/stderr，会被捕获
 
         onLog("命令构建完成，共 ${cmd.size} 个参数")
         return cmd.toTypedArray()
