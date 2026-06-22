@@ -27,7 +27,9 @@ jobs:
         uses: android-actions/setup-android@v3
  
       - name: Enable Termux terminal dependency
-        run: sed -i 's|//    implementation("com.github.termux:termux-app:master:terminal-viewer")|    implementation("com.github.termux:termux-app:master:terminal-viewer")|' app/build.gradle.kts
+        run: |
+             sed -i '/com\.github\.termux:termux-app:master:terminal-viewer/d' app/build.gradle.kts
+             sed -i '/implementation(project(":x11"))/a\    implementation("com.github.termux.termux-app:terminal-emulator:master-SNAPSHOT")\n    implementation("com.github.termux.termux-app:terminal-view:master-SNAPSHOT")' app/build.gradle.kts
 
       - name: Build Debug APK
         run: |
