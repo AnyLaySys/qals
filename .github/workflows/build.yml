@@ -29,7 +29,7 @@ jobs:
       - name: Enable Termux terminal dependency
         run: |
              sed -i '/com\.github\.termux:termux-app:master:terminal-viewer/d' app/build.gradle.kts
-             sed -i '/implementation(project(":x11"))/a\    implementation("com.github.termux.termux-app:terminal-emulator:master-SNAPSHOT")\n    implementation("com.github.termux.termux-app:terminal-view:master-SNAPSHOT")' app/build.gradle.kts
+             sed -i '/implementation(project(":x11"))/a\    implementation("com.github.termux.termux-app:terminal-emulator:v0.119.0-beta.3")\n    implementation("com.github.termux.termux-app:terminal-view:v0.119.0-beta.3")' app/build.gradle.kts
 
       - name: Build Debug APK
         run: |
