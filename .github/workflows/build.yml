@@ -26,10 +26,13 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
  
+      - name: Enable Termux terminal dependency
+        run: sed -i 's|//    implementation("com.github.termux:termux-app:master:terminal-viewer")|    implementation("com.github.termux:termux-app:master:terminal-viewer")|' app/build.gradle.kts
+
       - name: Build Debug APK
         run: |
              chmod +x ./gradlew
-             ./gradlew assembleDebug
+             ./gradlew assembleDebug --no-configuration-cache
  
       - name: Upload APK
         uses: actions/upload-artifact@v4
