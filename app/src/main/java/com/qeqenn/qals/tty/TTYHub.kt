@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.res.*
 import androidx.compose.ui.unit.*
 import com.qeqenn.qals.R
+import androidx.compose.material3.Text
 import com.qeqenn.qals.ui.*  // 如果不存在，可改为自定义组件，但这里可以注释掉，因为未使用
 
 @Composable

@@ -282,7 +282,7 @@ fun AppContent() {
 
         // 在终端中执行命令
         ttyIO.execute {
-            instance.session.write(("$cmd\n").toByteArray())
+            instance.session.write("$cmd\n")
         }
 
         // 跳转到终端界面
@@ -291,7 +291,8 @@ fun AppContent() {
 
     // 停止虚拟机（通过终端会话发送 Ctrl+C）
     fun stopVmInTerminal() {
-        currentTTYInstance?.session?.write("\u0003".toByteArray())        addLog("发送停止信号")
+        currentTTYInstance?.session?.write("\u0003")
+        addLog("发送停止信号")
         refreshTrigger++
     }
 
