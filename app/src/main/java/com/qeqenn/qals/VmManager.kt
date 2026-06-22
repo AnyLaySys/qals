@@ -1,5 +1,6 @@
 package com.qeqenn.qals
 
+import android.content.Context
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -19,8 +20,33 @@ object VmManager {
         onOutput: (String) -> Unit,
         onExit: (Int) -> Unit
     ): Boolean {
+        if (vm.displayEnabled) {
+            onLog("显示模式需要 Context 初始化 X11")
+            return false
+        }
+        return startVm(null, vm, gunyahEnabled, gzvmEnabled, onLog, onOutput, onExit)
+    }
+
+    fun startVm(
+        context: Context?,
+        vm: VmConfig,
+        gunyahEnabled: Boolean,
+        gzvmEnabled: Boolean,
+        onLog: (String) -> Unit,
+        onOutput: (String) -> Unit,
+        onExit: (Int) -> Unit
+    ): Boolean {
         if (isRunning(vm.id)) {
             stopVm(vm.id)
+        }
+
+        if (vm.displayEnabled) {
+            try {
+                X11.prepare(context ?: return false)
+            } catch (e: Exception) {
+                onLog("X11 准备失败: ${e.message}")
+                return false
+            }
         }
 
         val cmd = buildCommand(vm, gunyahEnabled, gzvmEnabled, onLog)
@@ -129,11 +155,7 @@ object VmManager {
         gzvmEnabled: Boolean,
         onLog: (String) -> Unit
     ): Array<String>? {
-        val base = when {
-            !gunyahEnabled && !gzvmEnabled -> "/data/local/tmp/qemu-gzvm"
-            gzvmEnabled -> "/data/local/tmp/qemu-gzvm"
-            else -> "/data/local/tmp/qemu-gunyah"
-        }
+        val base = X11.qemuBase(gunyahEnabled, gzvmEnabled)
 
         val libs = if (gunyahEnabled && !gzvmEnabled) {
             "$base/lib"
@@ -311,6 +333,9 @@ object VmManager {
         }
 
         onLog("命令构建完成，共 ${cmd.size} 个参数")
+        if (vm.displayEnabled) {
+            return arrayOf(X11.wrapCommand(base, cmd.joinToString(" ")))
+        }
         return cmd.toTypedArray()
     }
 }

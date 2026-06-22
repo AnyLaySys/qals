@@ -253,6 +253,15 @@ fun AppContent() {
     // ---------- TTY 启动 ----------
     fun startVmInTerminal(vm: VmConfig) {
         addLog("准备在终端中启动虚拟机: ${vm.name}")
+        if (vm.displayEnabled) {
+            try {
+                X11.prepare(context)
+                addLog("X11 键盘配置已准备")
+            } catch (e: Exception) {
+                addLog("X11 准备失败: ${e.message}")
+                return
+            }
+        }
         val cmd = QemuCommandBuilder.buildCommand(
             vm = vm,
             gunyahEnabled = isGunyahEnabled,

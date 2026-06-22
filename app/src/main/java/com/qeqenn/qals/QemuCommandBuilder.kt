@@ -7,11 +7,7 @@ object QemuCommandBuilder {
         gzvmEnabled: Boolean,
         onLog: (String) -> Unit
     ): String? {
-        val base = when {
-            !gunyahEnabled && !gzvmEnabled -> "/data/local/tmp/qemu-gzvm"
-            gzvmEnabled -> "/data/local/tmp/qemu-gzvm"
-            else -> "/data/local/tmp/qemu-gunyah"
-        }
+        val base = X11.qemuBase(gunyahEnabled, gzvmEnabled)
 
         val libs = if (gunyahEnabled && !gzvmEnabled) "$base/lib" else base
         val bios = "$base/edk2-aarch64-gunyah.fd"
@@ -166,7 +162,7 @@ object QemuCommandBuilder {
             cmd.add("mon:stdio")
         }
 
-        // 返回空格分隔的命令字符串（用于终端执行）
-        return cmd.joinToString(" ")
+        val command = cmd.joinToString(" ")
+        return if (vm.displayEnabled) "su -c ${X11.shellQuote(X11.wrapCommand(base, command))}" else command
     }
 }
