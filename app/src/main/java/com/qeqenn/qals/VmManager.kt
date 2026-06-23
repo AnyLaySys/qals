@@ -1,9 +1,9 @@
 package com.qeqenn.qals
 
-import android.content.Context
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import android.content.Context
 
 object VmManager {
     private val runningProcesses = ConcurrentHashMap<String, Process>()
@@ -39,7 +39,6 @@ object VmManager {
         if (isRunning(vm.id)) {
             stopVm(vm.id)
         }
-
         if (vm.displayEnabled) {
             try {
                 X11.prepare(context ?: return false)
@@ -48,7 +47,6 @@ object VmManager {
                 return false
             }
         }
-
         val cmd = buildCommand(vm, gunyahEnabled, gzvmEnabled, onLog)
         if (cmd == null) {
             onLog("构建命令行失败")
@@ -72,6 +70,7 @@ object VmManager {
                 onLog("无法获取 PID")
             }
 
+            // 读取 stdout
             Thread {
                 try {
                     process.inputStream.bufferedReader().useLines { lines ->
@@ -84,6 +83,7 @@ object VmManager {
                 }
             }.start()
 
+            // 读取 stderr
             Thread {
                 try {
                     process.errorStream.bufferedReader().useLines { lines ->
@@ -96,6 +96,7 @@ object VmManager {
                 }
             }.start()
 
+            // 监控进程退出
             Thread {
                 try {
                     val exitCode = process.waitFor()
@@ -128,7 +129,7 @@ object VmManager {
                     runningPids.remove(vmId)
                     runningStreams.remove(vmId)?.close()
                 } catch (e: Exception) {
-                    // 忽略所有异常，防止闪退
+                    // ignore
                 }
             }.start()
         }
@@ -149,7 +150,8 @@ object VmManager {
         }
     }
 
-    private fun buildCommand(
+    // 公开的 buildCommand 用于生成命令弹窗
+    fun buildCommand(
         vm: VmConfig,
         gunyahEnabled: Boolean,
         gzvmEnabled: Boolean,
@@ -157,14 +159,8 @@ object VmManager {
     ): Array<String>? {
         val base = X11.qemuBase(gunyahEnabled, gzvmEnabled)
 
-        val libs = if (gunyahEnabled && !gzvmEnabled) {
-            "$base/lib"
-        } else {
-            base
-        }
-
+        val libs = if (gunyahEnabled && !gzvmEnabled) "$base/lib" else base
         val bios = "$base/edk2-aarch64-gunyah.fd"
-
         val cpuCount = vm.cpu
         val memSize = vm.memory.toInt()
 
@@ -195,6 +191,7 @@ object VmManager {
         }
 
         if (accel == "gzvm") {
+            // ---------- GZVM 专用 ----------
             cmd.add("-M")
             cmd.add("virt,gic-version=3")
             cmd.add("-cpu")
@@ -215,7 +212,7 @@ object VmManager {
                 cmd.add(vm.kernel)
                 if (!vm.cmdline.isNullOrEmpty()) {
                     cmd.add("-append")
-                    cmd.add(vm.cmdline)
+                    cmd.add("\"${vm.cmdline}\"")
                 }
             } else {
                 cmd.add("-bios")
@@ -226,9 +223,8 @@ object VmManager {
                 cmd.add("-drive")
                 cmd.add("if=none,file=${vm.disk},format=raw,id=hd")
                 cmd.add("-device")
-                cmd.add("virtio-blk-pci,drive=hd,ioeventfd=off")
+                cmd.add("virtio-blk-pci,drive=hd")
             }
-
             if (vm.cdrom != null) {
                 cmd.add("-drive")
                 cmd.add("if=none,file=${vm.cdrom},format=raw,id=cd")
@@ -243,16 +239,22 @@ object VmManager {
                 cmd.add("virtio-net-pci,netdev=usernet")
             }
 
+            if (vm.audio) {
+                cmd.add("-audiodev")
+                cmd.add("aaudio,id=aa")
+                cmd.add("-device")
+                cmd.add("virtio-snd-pci,audiodev=aa")
+            }
+
             if (!vm.displayEnabled) {
                 cmd.add("-nographic")
             }
-
         } else {
+            // ---------- Gunyah / TCG 通用 ----------
             cmd.add("-M")
             cmd.add("virt,confidential-guest-support=prot0")
             cmd.add("--accel")
             cmd.add(accel)
-
             if (accel == "tcg,thread=multi" || accel == "tcg") {
                 cmd.add("-cpu")
                 cmd.add("cortex-a76")
@@ -260,7 +262,6 @@ object VmManager {
                 cmd.add("-cpu")
                 cmd.add("host")
             }
-
             cmd.add("-smp")
             cmd.add("$cpuCount,sockets=1,cores=$cpuCount,threads=1")
             cmd.add("-m")
@@ -296,7 +297,6 @@ object VmManager {
                 cmd.add("-device")
                 cmd.add("virtio-blk-pci,drive=dr1,bootindex=1")
             }
-
             if (vm.disk != null) {
                 cmd.add("-drive")
                 cmd.add("file=${vm.disk},if=none,id=dr0,cache=unsafe,aio=threads,discard=unmap")
@@ -311,9 +311,15 @@ object VmManager {
                 cmd.add("virtio-net-pci,netdev=usernet")
             }
 
+            if (vm.audio) {
+                cmd.add("-audiodev")
+                cmd.add("aaudio,id=aa")
+                cmd.add("-device")
+                cmd.add("virtio-snd-pci,audiodev=aa")
+            }
+
             cmd.add("-device")
             cmd.add("virtio-gpu-pci,xres=2376,yres=1080")
-
             if (!vm.displayEnabled) {
                 cmd.add("-nographic")
             } else {

@@ -2,6 +2,8 @@ package com.qeqenn.qals
 
 import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -18,18 +20,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.termux.terminal.TerminalSession
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.content.ClipData
+import android.content.ClipboardManager
 import com.qeqenn.qals.tty.*
 import com.qeqenn.qals.ui.theme.QALSTheme
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-// ---------- 数据类 VmConfig（保持不变） ----------
+// ---------- 数据类 ----------
 data class VmConfig(
     val id: String = System.currentTimeMillis().toString(),
     val name: String = "",
@@ -126,6 +138,9 @@ fun AppContent() {
     var isGzvmEnabled by remember {
         mutableStateOf(prefs.getBoolean("gzvm_support", false))
     }
+    var generateCommandEnabled by remember {
+        mutableStateOf(prefs.getBoolean("generate_command_als", false))
+    }
 
     // ---------- 虚拟机列表 ----------
     var vmList by remember { mutableStateOf<List<VmConfig>>(emptyList()) }
@@ -133,6 +148,10 @@ fun AppContent() {
     // ---------- 删除对话框 ----------
     var showDeleteDialog by remember { mutableStateOf(false) }
     var deleteTargetId by remember { mutableStateOf<String?>(null) }
+
+    // ---------- 命令对话框 ----------
+    var showCommandDialog by remember { mutableStateOf(false) }
+    var dialogCommand by remember { mutableStateOf("") }
 
     // ---------- 日志 ----------
     var logMessages by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -144,15 +163,23 @@ fun AppContent() {
     var rootStatus by remember { mutableStateOf("检测中...") }
     var gunyahStatus by remember { mutableStateOf("检测中...") }
     var gzvmStatus by remember { mutableStateOf("检测中...") }
+    var qemuStatus by remember { mutableStateOf("检测中...") }
 
     // ---------- 刷新触发器 ----------
     var refreshTrigger by remember { mutableStateOf(0) }
 
     // ---------- TTY 相关 ----------
     var currentTTYInstance by remember { mutableStateOf<TTYInstance?>(null) }
+    var currentRunningVm by remember { mutableStateOf<VmConfig?>(null) }
 
     // ---------- 名称校验 ----------
     var nameError by remember { mutableStateOf<String?>(null) }
+
+    // ---------- 下载对话框状态 ----------
+    var showDownloadDialog by remember { mutableStateOf(false) }
+    var downloadStatus by remember { mutableStateOf("") }
+    var downloadProgress by remember { mutableStateOf(0f) }
+    var downloadCompleted by remember { mutableStateOf(false) }
 
     // ---------- 加载 ----------
     LaunchedEffect(Unit) {
@@ -162,7 +189,8 @@ fun AppContent() {
         rootStatus = root
         gunyahStatus = gunyah
         gzvmStatus = gzvm
-        addLog("检测完成: Root=$root, Gunyah=$gunyah, GZVM=$gzvm")
+        qemuStatus = checkQemuStatus(onLog = ::addLog)
+        addLog("检测完成: Root=$root, Gunyah=$gunyah, GZVM=$gzvm, QEMU=$qemuStatus")
     }
 
     // ---------- 表单操作 ----------
@@ -250,8 +278,34 @@ fun AppContent() {
         vmList = newList
     }
 
-    // ---------- TTY 启动 ----------
+    fun stopVmInTerminal() {
+        Thread {
+            try {
+                val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "killall qemu-system-aarch64"))
+                val exitCode = process.waitFor()
+                if (exitCode == 0) {
+                    addLog("已执行 killall qemu-system-aarch64，成功终止 QEMU 进程")
+                } else {
+                    val error = process.errorStream.bufferedReader().readText().trim()
+                    addLog("killall 执行失败，退出码: $exitCode, 错误: $error")
+                }
+            } catch (e: Exception) {
+                addLog("执行 killall 异常: ${e.message}")
+            }
+        }.start()
+
+        currentTTYInstance = null
+        currentRunningVm = null
+        refreshTrigger++
+        addLog("虚拟机会话已标记为终止")
+    }
+
+    // ---------- 运行/终端逻辑 ----------
     fun startVmInTerminal(vm: VmConfig) {
+        if (currentTTYInstance != null) {
+            stopVmInTerminal()
+        }
+
         addLog("准备在终端中启动虚拟机: ${vm.name}")
         if (vm.displayEnabled) {
             try {
@@ -262,43 +316,138 @@ fun AppContent() {
                 return
             }
         }
-        val cmd = QemuCommandBuilder.buildCommand(
+        val cmdStr = QemuCommandBuilder.buildCommand(
             vm = vm,
             gunyahEnabled = isGunyahEnabled,
             gzvmEnabled = isGzvmEnabled,
             onLog = ::addLog
         )
-        if (cmd == null) {
+        if (cmdStr == null) {
             addLog("命令构建失败")
             return
         }
-        addLog("完整命令: $cmd")
+        addLog("完整命令: $cmdStr")
 
-        // 创建 TTY 实例
         val sessionClient = TTYSessionStub()
         val viewClient = TTYViewStub()
         val instance = createTTYInstance(context, sessionClient, viewClient)
         currentTTYInstance = instance
+        currentRunningVm = vm
 
-        // 在终端中执行命令
-        ttyIO.execute {
-            instance.session.write("$cmd\n")
-        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            cmd(instance.session,"su")
+            cmd(instance.session, cmdStr)
+            addLog("命令已发送到终端")
+        }, 500)
 
-        // 跳转到终端界面
         currentScreen = "tty"
     }
 
-    // 停止虚拟机（通过终端会话发送 Ctrl+C）
-    fun stopVmInTerminal() {
-        currentTTYInstance?.session?.write("\u0003")
-        addLog("发送停止信号")
-        refreshTrigger++
+    fun openTerminal(vm: VmConfig) {
+        if (currentTTYInstance == null || currentRunningVm?.id != vm.id) {
+            startVmInTerminal(vm)
+            return
+        }
+        currentScreen = "tty"
+    }
+
+    fun showCommandDialog(vm: VmConfig) {
+        val fullCmd = VmManager.buildCommand(
+            vm = vm,
+            gunyahEnabled = isGunyahEnabled,
+            gzvmEnabled = isGzvmEnabled,
+            onLog = ::addLog
+        )
+        if (fullCmd == null) {
+            addLog("生成命令失败")
+            return
+        }
+        val qemuIndex = fullCmd.indexOfFirst { it.contains("qemu-system-aarch64") }
+        if (qemuIndex == -1) {
+            addLog("未找到 qemu-system-aarch64")
+            return
+        }
+        val qemuArgs = fullCmd.drop(qemuIndex)
+        dialogCommand = "./${qemuArgs.first().substringAfterLast("/")} ${qemuArgs.drop(1).joinToString(" ")}"
+        showCommandDialog = true
+    }
+
+    fun startDownloadQemu() {
+        showDownloadDialog = true
+        downloadStatus = "正在下载..."
+        downloadCompleted = false
+        downloadProgress = 0f
+        addLog("开始下载 QEMU...")
+
+        var progressJob: Job? = null
+        progressJob = CoroutineScope(Dispatchers.Main).launch {
+            while (downloadProgress < 40f && !downloadCompleted) {
+                delay(10)
+                downloadProgress += 0.2f
+            }
+            while (downloadProgress < 60f && !downloadCompleted) {
+                delay(20)
+                downloadProgress += 0.2f
+            }
+            while (downloadProgress < 80f && !downloadCompleted) {
+                delay(40)
+                downloadProgress += 0.2f
+            }
+            while (downloadProgress < 95f && !downloadCompleted) {
+                delay(50)
+                downloadProgress += 0.1f
+                if (downloadProgress > 95f) downloadProgress = 90f
+            }
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val cmd = "wget https://qemu-bin.down.yuyewan.dpdns.org/bin.zip -P /data/local/tmp && " +
+                        "unzip /data/local/tmp/bin.zip -d /data/local/tmp -o && " +
+                        "rm -f /data/local/tmp/bin.zip"
+                addLog("执行命令: su -c '$cmd'")
+                val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+                val exitCode = process.waitFor()
+                val output = process.inputStream.bufferedReader().readText().trim()
+                val error = process.errorStream.bufferedReader().readText().trim()
+                if (output.isNotEmpty()) addLog("输出: $output")
+                if (error.isNotEmpty()) addLog("错误: $error")
+
+                progressJob?.cancel()
+
+                withContext(Dispatchers.Main) {
+                    if (exitCode == 0) {
+                        downloadStatus = "下载并解压完成！"
+                        downloadCompleted = true
+                        downloadProgress = 100f
+                        addLog("下载并解压完成！")
+                        // 刷新 QEMU 状态
+                        qemuStatus = checkQemuStatus(onLog = ::addLog)
+                        addLog("QEMU 状态已刷新: $qemuStatus")
+                    } else {
+                        downloadStatus = "执行失败，退出码: $exitCode"
+                        downloadProgress = 100f
+                        addLog("执行失败，退出码: $exitCode")
+                    }
+                }
+            } catch (e: Exception) {
+                progressJob?.cancel()
+                withContext(Dispatchers.Main) {
+                    downloadStatus = "错误: ${e.message}"
+                    downloadProgress = 100f
+                    addLog("下载异常: ${e.message}")
+                }
+            }
+        }
     }
 
     // ---------- 返回键 ----------
     BackHandler {
         if (currentScreen != "main") {
+            if (currentScreen == "tty") {
+                refreshTrigger++
+                addLog("从终端返回主页，刷新状态")
+            }
             if (currentScreen == "add_vm" || currentScreen == "edit_vm") {
                 resetForm()
             }
@@ -313,80 +462,72 @@ fun AppContent() {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = when (currentScreen) {
-                                "main" -> "QALS"
-                                "settings" -> "设置"
-                                "add_vm" -> "添加虚拟机"
-                                "edit_vm" -> "修改虚拟机"
-                                "logs" -> "日志"
-                                "tty" -> "终端 - ${currentTTYInstance?.let { "QEMU" } ?: ""}"
-                                else -> "QALS"
-                            },
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-                    actions = {
-                        when (currentScreen) {
-                            "main" -> {
-                                TextButton(onClick = { currentScreen = "logs" }) {
-                                    Text("日志", color = Color(0xFF2196F3), fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                if (currentScreen == "tty") {
+                    null
+                } else {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                text = when (currentScreen) {
+                                    "main" -> "QALS"
+                                    "settings" -> "设置"
+                                    "add_vm" -> "添加虚拟机"
+                                    "edit_vm" -> "修改虚拟机"
+                                    "logs" -> "日志"
+                                    else -> "QALS"
+                                },
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        actions = {
+                            when (currentScreen) {
+                                "main" -> {
+                                    TextButton(onClick = { currentScreen = "logs" }) {
+                                        Text("日志", color = Color(0xFF2196F3), fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                    TextButton(onClick = { currentScreen = "settings" }) {
+                                        Text("设置", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                    }
                                 }
-                                TextButton(onClick = { currentScreen = "settings" }) {
-                                    Text("设置", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                "settings" -> {
+                                    TextButton(
+                                        onClick = {
+                                            prefs.edit().apply {
+                                                putBoolean("gunyah_support", isGunyahEnabled)
+                                                putBoolean("gzvm_support", isGzvmEnabled)
+                                                putBoolean("generate_command_als", generateCommandEnabled)
+                                            }.apply()
+                                            currentScreen = "main"
+                                        }
+                                    ) {
+                                        Text("保存", color = Color.Green, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                    }
                                 }
-                            }
-                            "settings" -> {
-                                TextButton(
-                                    onClick = {
-                                        prefs.edit().apply {
-                                            putBoolean("gunyah_support", isGunyahEnabled)
-                                            putBoolean("gzvm_support", isGzvmEnabled)
-                                        }.apply()
+                                "add_vm", "edit_vm" -> {
+                                    TextButton(
+                                        onClick = {
+                                            if (saveVm()) { /* 自动跳转 */ }
+                                        }
+                                    ) {
+                                        Text("保存", color = Color.Green, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                    TextButton(onClick = {
+                                        resetForm()
                                         currentScreen = "main"
+                                    }) {
+                                        Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                     }
-                                ) {
-                                    Text("保存", color = Color.Green, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                 }
-                            }
-                            "add_vm", "edit_vm" -> {
-                                TextButton(
-                                    onClick = {
-                                        if (saveVm()) { /* 自动跳转 */ }
+                                "logs" -> {
+                                    TextButton(onClick = { currentScreen = "main" }) {
+                                        Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                     }
-                                ) {
-                                    Text("保存", color = Color.Green, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                                }
-                                TextButton(onClick = {
-                                    resetForm()
-                                    currentScreen = "main"
-                                }) {
-                                    Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                                }
-                            }
-                            "logs" -> {
-                                TextButton(onClick = { currentScreen = "main" }) {
-                                    Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                                }
-                            }
-                            "tty" -> {
-                                // 提供停止和返回按钮
-                                TextButton(onClick = { stopVmInTerminal() }) {
-                                    Text("停止", color = Color.Red, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                                }
-                                TextButton(onClick = {
-                                    currentScreen = "main"
-                                    currentTTYInstance = null
-                                }) {
-                                    Text("返回", color = Color.Blue, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
                         }
-                    }
-                )
+                    )
+                }
             }
         ) { innerPadding ->
             Crossfade(targetState = currentScreen) { screen ->
@@ -398,7 +539,7 @@ fun AppContent() {
                                 contentPadding = PaddingValues(bottom = 60.dp)
                             ) {
                                 items(vmList) { vm ->
-                                    val isRunning = currentTTYInstance != null // 简化，实际可根据 session 状态
+                                    val isRunning = currentTTYInstance != null && currentRunningVm?.id == vm.id
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -444,7 +585,7 @@ fun AppContent() {
                                             ) {
                                                 if (isRunning) {
                                                     Button(
-                                                        onClick = { /* 暂时无操作，或打开终端 */ },
+                                                        onClick = { openTerminal(vm) },
                                                         colors = ButtonDefaults.buttonColors(
                                                             containerColor = Color(0xFF4CAF50)
                                                         ),
@@ -456,10 +597,13 @@ fun AppContent() {
                                                 Button(
                                                     onClick = {
                                                         if (isRunning) {
-                                                            // 停止
                                                             stopVmInTerminal()
                                                         } else {
-                                                            startVmInTerminal(vm)
+                                                            if (generateCommandEnabled) {
+                                                                showCommandDialog(vm)
+                                                            } else {
+                                                                startVmInTerminal(vm)
+                                                            }
                                                         }
                                                     },
                                                     colors = ButtonDefaults.buttonColors(
@@ -512,6 +656,37 @@ fun AppContent() {
                                     }
                                 )
                             }
+
+                            if (showCommandDialog) {
+                                AlertDialog(
+                                    onDismissRequest = { showCommandDialog = false },
+                                    title = { Text("QEMU 启动命令") },
+                                    text = {
+                                        Text(
+                                            text = dialogCommand,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(8.dp)
+                                        )
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            val clip = ClipData.newPlainText("QEMU Command", dialogCommand)
+                                            clipboard.setPrimaryClip(clip)
+                                            addLog("命令已复制到剪贴板")
+                                            showCommandDialog = false
+                                        }) {
+                                            Text("复制")
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { showCommandDialog = false }) {
+                                            Text("确定")
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                     "settings" -> {
@@ -529,6 +704,13 @@ fun AppContent() {
                             rootStatus = rootStatus,
                             gunyahStatus = gunyahStatus,
                             gzvmStatus = gzvmStatus,
+                            generateCommandEnabled = generateCommandEnabled,
+                            onGenerateCommandChange = { newValue ->
+                                generateCommandEnabled = newValue
+                                prefs.edit().putBoolean("generate_command_als", newValue).apply()
+                            },
+                            onDownloadQemu = { startDownloadQemu() },
+                            qemuStatus = qemuStatus,
                             modifier = Modifier.padding(innerPadding)
                         )
                     }
@@ -582,18 +764,50 @@ fun AppContent() {
                     }
                     "tty" -> {
                         currentTTYInstance?.let { instance ->
-                            // 使用 TTYScreen 显示终端，键盘作为 content
                             TTYScreen(
                                 instance = instance,
                                 content = { TTYIME() }
                             )
                         } ?: run {
-                            // 如果实例为空，显示提示并返回
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Text("终端已关闭", color = Color.White)
                             }
                         }
                     }
+                }
+                // 下载 QEMU 对话框
+                if (showDownloadDialog) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            if (downloadCompleted || downloadStatus.contains("失败") || downloadStatus.contains("错误")) {
+                                showDownloadDialog = false
+                                downloadCompleted = false
+                            }
+                        },
+                        title = { Text("下载 QEMU") },
+                        text = {
+                            Column {
+                                Text(downloadStatus)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = downloadProgress / 100f,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showDownloadDialog = false
+                                    downloadCompleted = false
+                                },
+                                enabled = downloadCompleted || downloadStatus.contains("失败") || downloadStatus.contains("错误")
+                            ) {
+                                Text("确定")
+                            }
+                        },
+                        dismissButton = null
+                    )
                 }
             }
         }
@@ -619,7 +833,27 @@ fun saveVmList(prefs: android.content.SharedPreferences, list: List<VmConfig>) {
     prefs.edit().putString("vm_list", array.toString()).apply()
 }
 
-// ---------- 状态检测 ----------
+// ---------- QEMU 状态检测 ----------
+private suspend fun checkQemuStatus(onLog: (String) -> Unit): String = withContext(Dispatchers.IO) {
+    onLog("执行命令: su -c ls /data/local/tmp/qemu-gunyah/qemu-system-aarch64")
+    try {
+        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /data/local/tmp/qemu-gunyah/qemu-system-aarch64"))
+        val exitCode = process.waitFor()
+        val output = process.inputStream.bufferedReader().readText().trim()
+        val error = process.errorStream.bufferedReader().readText().trim()
+        onLog("退出码: $exitCode, 输出: $output, 错误: $error")
+        if (exitCode == 0 && output == "/data/local/tmp/qemu-gunyah/qemu-system-aarch64") {
+            "可以使用"
+        } else {
+            "请先下载"
+        }
+    } catch (e: Exception) {
+        onLog("检测 QEMU 异常: ${e.message}")
+        "请先下载"
+    }
+}
+
+// ---------- 状态检测（支持 Permission denied） ----------
 suspend fun checkAllStatus(onLog: (String) -> Unit): Triple<String, String, String> =
     withContext(Dispatchers.IO) {
         onLog("执行命令: su -c exit")
@@ -643,7 +877,11 @@ suspend fun checkAllStatus(onLog: (String) -> Unit): Triple<String, String, Stri
                 val output = process.inputStream.bufferedReader().readText().trim()
                 val error = process.errorStream.bufferedReader().readText().trim()
                 onLog("退出码: $exitCode, 输出: $output, 错误: $error")
-                if (exitCode == 0 && output == "/dev/gunyah") "可以使用" else "不可使用"
+                when {
+                    output.contains("Permission denied") || error.contains("Permission denied") -> "检测到，但不可用"
+                    exitCode == 0 && output == "/dev/gunyah" -> "可以使用"
+                    else -> "不可使用"
+                }
             } catch (e: Exception) {
                 onLog("异常: ${e.message}")
                 "不可使用"
@@ -661,7 +899,11 @@ suspend fun checkAllStatus(onLog: (String) -> Unit): Triple<String, String, Stri
                 val output = process.inputStream.bufferedReader().readText().trim()
                 val error = process.errorStream.bufferedReader().readText().trim()
                 onLog("退出码: $exitCode, 输出: $output, 错误: $error")
-                if (exitCode == 0 && output == "/dev/gzvm") "可以使用" else "不可使用"
+                when {
+                    output.contains("Permission denied") || error.contains("Permission denied") -> "检测到，但不可用"
+                    exitCode == 0 && output == "/dev/gzvm" -> "可以使用"
+                    else -> "不可使用"
+                }
             } catch (e: Exception) {
                 onLog("异常: ${e.message}")
                 "不可使用"

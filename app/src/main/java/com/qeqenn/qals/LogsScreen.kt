@@ -33,7 +33,6 @@ fun LogsScreen(logMessages: List<String>, onClear: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 使用 SelectionContainer 启用文本选择
         SelectionContainer {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),

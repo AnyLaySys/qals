@@ -41,6 +41,7 @@ object QemuCommandBuilder {
         }
 
         if (accel == "gzvm") {
+            // ---------- GZVM 专用 ----------
             cmd.add("-M")
             cmd.add("virt,gic-version=3")
             cmd.add("-cpu")
@@ -61,7 +62,7 @@ object QemuCommandBuilder {
                 cmd.add(vm.kernel)
                 if (!vm.cmdline.isNullOrEmpty()) {
                     cmd.add("-append")
-                    cmd.add(vm.cmdline)
+                    cmd.add("\"${vm.cmdline}\"")
                 }
             } else {
                 cmd.add("-bios")
@@ -72,7 +73,7 @@ object QemuCommandBuilder {
                 cmd.add("-drive")
                 cmd.add("if=none,file=${vm.disk},format=raw,id=hd")
                 cmd.add("-device")
-                cmd.add("virtio-blk-pci,drive=hd,ioeventfd=off")
+                cmd.add("virtio-blk-pci,drive=hd")
             }
             if (vm.cdrom != null) {
                 cmd.add("-drive")
@@ -80,16 +81,26 @@ object QemuCommandBuilder {
                 cmd.add("-device")
                 cmd.add("virtio-blk-pci,drive=cd")
             }
+
             if (vm.network) {
                 cmd.add("-netdev")
                 cmd.add("user,id=usernet,hostfwd=tcp::2222-:22")
                 cmd.add("-device")
                 cmd.add("virtio-net-pci,netdev=usernet")
             }
+
+            if (vm.audio) {
+                cmd.add("-audiodev")
+                cmd.add("aaudio,id=aa")
+                cmd.add("-device")
+                cmd.add("virtio-snd-pci,audiodev=aa")
+            }
+
             if (!vm.displayEnabled) {
                 cmd.add("-nographic")
             }
         } else {
+            // ---------- Gunyah / TCG 通用 ----------
             cmd.add("-M")
             cmd.add("virt,confidential-guest-support=prot0")
             cmd.add("--accel")
@@ -105,10 +116,12 @@ object QemuCommandBuilder {
             cmd.add("$cpuCount,sockets=1,cores=$cpuCount,threads=1")
             cmd.add("-m")
             cmd.add("${memSize}G")
+
             if (accel == "gunyah" || (gunyahEnabled && !gzvmEnabled)) {
                 cmd.add("-object")
                 cmd.add("arm-confidential-guest,id=prot0,swiotlb-size=64M")
             }
+
             if (vm.bootMode == "内核") {
                 if (vm.kernel.isNullOrEmpty()) {
                     onLog("内核文件未选择")
@@ -124,8 +137,10 @@ object QemuCommandBuilder {
                 cmd.add("-bios")
                 cmd.add(bios)
             }
+
             cmd.add("-object")
             cmd.add("iothread,id=io0")
+
             if (vm.cdrom != null) {
                 cmd.add("-drive")
                 cmd.add("file=${vm.cdrom},if=none,id=dr1,format=raw,aio=threads,media=cdrom")
@@ -138,12 +153,21 @@ object QemuCommandBuilder {
                 cmd.add("-device")
                 cmd.add("virtio-blk-pci,drive=dr0,num-queues=$cpuCount,iothread=io0,disable-legacy=on,disable-modern=off,bootindex=2")
             }
+
             if (vm.network) {
                 cmd.add("-netdev")
                 cmd.add("user,id=usernet,hostfwd=tcp::2222-:22")
                 cmd.add("-device")
                 cmd.add("virtio-net-pci,netdev=usernet")
             }
+
+            if (vm.audio) {
+                cmd.add("-audiodev")
+                cmd.add("aaudio,id=aa")
+                cmd.add("-device")
+                cmd.add("virtio-snd-pci,audiodev=aa")
+            }
+
             cmd.add("-device")
             cmd.add("virtio-gpu-pci,xres=2376,yres=1080")
             if (!vm.displayEnabled) {
@@ -154,14 +178,17 @@ object QemuCommandBuilder {
                     cmd.add("sdl")
                 }
             }
+
             cmd.add("-device")
             cmd.add("virtio-tablet-pci")
             cmd.add("-device")
             cmd.add("virtio-keyboard-pci")
+
             cmd.add("-serial")
             cmd.add("mon:stdio")
         }
 
+        onLog("命令构建完成，共 ${cmd.size} 个参数")
         val command = cmd.joinToString(" ")
         return if (vm.displayEnabled) "su -c ${X11.shellQuote(X11.wrapCommand(base, command))}" else command
     }

@@ -97,7 +97,7 @@ fun AddVmScreen(
             .imePadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 名称
+        // ---------- 名称 ----------
         Column(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -121,7 +121,7 @@ fun AddVmScreen(
             }
         }
 
-        // 操作系统
+        // ---------- 操作系统 ----------
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -164,7 +164,7 @@ fun AddVmScreen(
             }
         }
 
-        // CPU
+        // ---------- CPU ----------
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -194,7 +194,7 @@ fun AddVmScreen(
             )
         }
 
-        // 内存
+        // ---------- 内存 ----------
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -224,7 +224,7 @@ fun AddVmScreen(
             )
         }
 
-        // 光盘
+        // ---------- 光盘 ----------
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -269,7 +269,7 @@ fun AddVmScreen(
             }
         }
 
-        // 硬盘
+        // ---------- 硬盘 ----------
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -314,7 +314,7 @@ fun AddVmScreen(
             }
         }
 
-        // 网络
+        // ---------- 网络 ----------
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -332,7 +332,7 @@ fun AddVmScreen(
             )
         }
 
-        // 音频（保留开关但实际已禁用，但仍存储到配置，以备后续使用）
+        // ---------- 音频 ----------
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -350,7 +350,7 @@ fun AddVmScreen(
             )
         }
 
-        // 启动方式
+        // ---------- 启动方式 ----------
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -387,7 +387,7 @@ fun AddVmScreen(
             }
         }
 
-        // 内核
+        // ---------- 内核（条件显示） ----------
         if (bootMode == "内核") {
             Column(
                 modifier = Modifier
@@ -447,7 +447,7 @@ fun AddVmScreen(
             }
         }
 
-        // ---------- 新增：启用显示 ----------
+        // ---------- 启用显示 ----------
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -469,16 +469,25 @@ fun AddVmScreen(
     }
 }
 
+// ---------- URI 转路径 ----------
 private fun getAbsolutePath(context: Context, uri: android.net.Uri): String? {
     return try {
         if (DocumentsContract.isDocumentUri(context, uri)) {
             val docId = DocumentsContract.getDocumentId(uri)
             val split = docId.split(":")
             if (split.size > 1) {
-                if (split[0] == "primary") {
-                    "${android.os.Environment.getExternalStorageDirectory()}/${split[1]}"
-                } else {
-                    "/storage/${split[0]}/${split[1]}"
+                val type = split[0]
+                val path = split[1]
+                when (type) {
+                    "primary" -> {
+                        "${android.os.Environment.getExternalStorageDirectory()}/$path"
+                    }
+                    "external_files" -> {
+                        "${android.os.Environment.getExternalStorageDirectory()}/$path"
+                    }
+                    else -> {
+                        "/storage/$type/$path"
+                    }
                 }
             } else {
                 uri.path

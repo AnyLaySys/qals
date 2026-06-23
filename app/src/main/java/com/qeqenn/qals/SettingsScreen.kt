@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +23,10 @@ fun SettingsScreen(
     rootStatus: String,
     gunyahStatus: String,
     gzvmStatus: String,
+    generateCommandEnabled: Boolean,
+    onGenerateCommandChange: (Boolean) -> Unit,
+    onDownloadQemu: () -> Unit,
+    qemuStatus: String,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -63,6 +68,24 @@ fun SettingsScreen(
             )
         }
 
+        // Generate command for ALS
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Generate command for ALS",
+                fontSize = 18.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = generateCommandEnabled,
+                onCheckedChange = onGenerateCommandChange
+            )
+        }
+
         // Root 状态
         Row(
             modifier = Modifier
@@ -84,7 +107,7 @@ fun SettingsScreen(
             )
         }
 
-        // Gunyah 状态
+        // Gunyah 状态（三态颜色）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -100,12 +123,16 @@ fun SettingsScreen(
             Text(
                 text = gunyahStatus,
                 fontSize = 18.sp,
-                color = if (gunyahStatus == "可以使用") Color.Green else Color.Red,
+                color = when (gunyahStatus) {
+                    "可以使用" -> Color.Green
+                    "检测到，但不可用" -> Color.Gray
+                    else -> Color.Red
+                },
                 modifier = Modifier.weight(0.6f)
             )
         }
 
-        // GZVM 状态
+        // GZVM 状态（三态颜色）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -121,9 +148,49 @@ fun SettingsScreen(
             Text(
                 text = gzvmStatus,
                 fontSize = 18.sp,
-                color = if (gzvmStatus == "可以使用") Color.Green else Color.Red,
+                color = when (gzvmStatus) {
+                    "可以使用" -> Color.Green
+                    "检测到，但不可用" -> Color.Gray
+                    else -> Color.Red
+                },
                 modifier = Modifier.weight(0.6f)
             )
+        }
+
+        // QEMU 状态
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "QEMU状态：",
+                fontSize = 18.sp,
+                color = Color.Gray,
+                modifier = Modifier.weight(0.4f)
+            )
+            Text(
+                text = qemuStatus,
+                fontSize = 18.sp,
+                color = if (qemuStatus == "可以使用") Color.Green else Color.Red,
+                modifier = Modifier.weight(0.6f)
+            )
+        }
+
+        // 下载 QEMU 按钮
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 24.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(
+                onClick = onDownloadQemu,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("下载 QEMU", fontSize = 18.sp)
+            }
         }
     }
 }
