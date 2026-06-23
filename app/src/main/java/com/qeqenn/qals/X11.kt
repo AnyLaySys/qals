@@ -35,9 +35,13 @@ object X11 {
         return "${startScript(qemuDir)}; ${environmentScript()}; $command"
     }
 
+    fun wrapCommandAsList(qemuDir: String, command: String): List<String> {
+        return startScriptAsList(qemuDir) + environmentScript() + command
+    }
+
     fun shellQuote(value: String) = "'${value.replace("'", "'\\''")}'"
 
-    private fun startScript(qemuDir: String): String {
+    private fun startScriptAsList(qemuDir: String): List<String> {
         val x11Dir = "/data/data/$appPackage/cache/x11"
         return listOf(
             """[ "$(id -u)" = 0 ] || exit 1""",
@@ -56,7 +60,11 @@ object X11 {
             "for i in \$(seq 1 200); do [ -S \"\$X11_DIR/tmp/.X11-unix/X1\" ] && break; sleep 0.05; done",
             "[ -S \"\$X11_DIR/tmp/.X11-unix/X1\" ] || { cat \"\$X11_DIR/x11.log\" 2>/dev/null; exit 1; }",
             "for p in X11:6 X11-xcb:1 Xext:6 Xcursor:1 Xi:6 Xfixes:3 Xrandr:2 Xss:1 Xinerama:1 Xrender:1 Xau:6 Xdmcp:6 xcb:1; do n=\${p%:*}; v=\${p#*:}; [ -e \"\$QEMU_DIR/lib/lib\$n.so\" ] && ln -sf \"lib\$n.so\" \"\$QEMU_DIR/lib/lib\$n.so.\$v\"; done"
-        ).joinToString("; ")
+        )
+    }
+
+    private fun startScript(qemuDir: String): String {
+        return startScriptAsList(qemuDir).joinToString("; ")
     }
 
     private fun environmentScript(): String {

@@ -190,6 +190,6 @@ object QemuCommandBuilder {
 
         onLog("命令构建完成，共 ${cmd.size} 个参数")
         val command = cmd.joinToString(" ")
-        return if (vm.displayEnabled) "su -c ${X11.shellQuote(X11.wrapCommand(base, command))}" else command
+        return command
     }
 }

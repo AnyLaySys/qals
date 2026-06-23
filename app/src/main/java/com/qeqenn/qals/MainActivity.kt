@@ -335,8 +335,16 @@ fun AppContent() {
         currentRunningVm = vm
 
         Handler(Looper.getMainLooper()).postDelayed({
-            cmd(instance.session,"su")
-            cmd(instance.session, cmdStr)
+            cmd(instance.session, "su")
+            if (vm.displayEnabled) {
+                val base = X11.qemuBase(isGunyahEnabled, isGzvmEnabled)
+                val parts = X11.wrapCommandAsList(base, cmdStr)
+                for (part in parts) {
+                    cmd(instance.session, part)
+                }
+            } else {
+                cmd(instance.session, cmdStr)
+            }
             addLog("命令已发送到终端")
         }, 500)
 
