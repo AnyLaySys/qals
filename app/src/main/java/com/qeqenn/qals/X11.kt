@@ -31,6 +31,10 @@ object X11 {
         else -> "/data/local/tmp/qemu-gunyah"
     }
 
+    fun qemuLibraryPath(qemuDir: String): String {
+        return "$qemuDir/lib:$qemuDir:/system/lib64:/vendor/lib64"
+    }
+
     fun wrapCommand(qemuDir: String, command: String): String {
         return "${startScript(qemuDir)}; ${environmentScript()}; $command"
     }
@@ -68,7 +72,7 @@ object X11 {
     }
 
     private fun environmentScript(): String {
-        return "export DISPLAY=:1 XAUTHORITY=\"\$X11_DIR/home/.Xauthority\" HOME=\"\$X11_DIR/home\" TMPDIR=\"\$X11_DIR/tmp\" XDG_RUNTIME_DIR=\"\$X11_DIR/tmp\" XKB_CONFIG_ROOT=\"\$X11_DIR/xkb\" SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=aaudio SDL_VIDEO_X11_XRANDR=0 SDL_VIDEO_X11_XINERAMA=0 SDL_VIDEO_X11_XVIDMODE=0 SDL_VIDEO_X11_XCURSOR=0 LANG=C LC_ALL=C"
+        return "export DISPLAY=:1 XAUTHORITY=\"\$X11_DIR/home/.Xauthority\" HOME=\"\$X11_DIR/home\" TMPDIR=\"\$X11_DIR/tmp\" XDG_RUNTIME_DIR=\"\$X11_DIR/tmp\" XKB_CONFIG_ROOT=\"\$X11_DIR/xkb\" LD_LIBRARY_PATH=\"${qemuLibraryPath("\$QEMU_DIR")}\" SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=aaudio SDL_VIDEO_X11_XRANDR=0 SDL_VIDEO_X11_XINERAMA=0 SDL_VIDEO_X11_XVIDMODE=0 SDL_VIDEO_X11_XCURSOR=0 LANG=C LC_ALL=C"
     }
 
     private fun quote(value: String) = shellQuote(value)

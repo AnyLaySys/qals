@@ -9,7 +9,7 @@ object QemuCommandBuilder {
     ): String? {
         val base = X11.qemuBase(gunyahEnabled, gzvmEnabled)
 
-        val libs = if (gunyahEnabled && !gzvmEnabled) "$base/lib" else base
+        val libs = X11.qemuLibraryPath(base)
         val bios = "$base/edk2-aarch64-gunyah.fd"
         val cpuCount = vm.cpu
         val memSize = vm.memory.toInt()
