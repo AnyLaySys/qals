@@ -19,13 +19,16 @@ jobs:
         uses: android-actions/setup-android@v4
       - name: Init x11 submodules
         run: |
-             git clone --depth 1 --no-tags --recursive https://github.com/termux/termux-x11.git /tmp/x11-upstream
-             for dir in app/x11/app/src/main/cpp/*/; do
-               name=$(basename "$dir")
-               src="/tmp/x11-upstream/app/src/main/cpp/$name"
-               if [ -d "$src" ] && [ ! "$(ls -A "$dir" 2>/dev/null)" ]; then
-                 cp -r "$src"/. "$dir"/
-               fi
+             dirs="xorgproto libfontenc pixman libtirpc libxshmfence libxdmcp libxau libxfont libx11 libxkbfile xkbcomp xserver libxcvt libepoxy libxtrans"
+             git clone --depth 1 --filter=blob:none --no-tags --no-checkout https://github.com/termux/termux-x11.git /tmp/x11-upstream
+             git -C /tmp/x11-upstream sparse-checkout init --cone
+             git -C /tmp/x11-upstream sparse-checkout set $(for dir in $dirs; do printf "app/src/main/cpp/%s " "$dir"; done)
+             git -C /tmp/x11-upstream checkout
+             git -C /tmp/x11-upstream submodule update --init --depth 1 --recommend-shallow -- $(for dir in $dirs; do printf "app/src/main/cpp/%s " "$dir"; done)
+             mkdir -p app/x11/app/src/main/cpp
+             for dir in $dirs; do
+               rm -rf "app/x11/app/src/main/cpp/$dir"
+               cp -a "/tmp/x11-upstream/app/src/main/cpp/$dir" "app/x11/app/src/main/cpp/$dir"
              done
              rm -rf /tmp/x11-upstream
       - name: Build Debug APK
